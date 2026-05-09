@@ -115,3 +115,45 @@ Do not open a PR with code changes when the required checks fail.
 - `crates/policy/AGENTS.md`
 - `rustfs/src/admin/AGENTS.md`
 - `rustfs/src/storage/AGENTS.md`
+
+## Cursor Cloud specific instructions
+
+### System dependencies
+
+The VM update script handles `cargo` dependency fetching only.
+The following tools must be pre-installed in the VM image (the update script does **not** reinstall them):
+
+| Tool | Version | Install note |
+|------|---------|--------------|
+| `protoc` | 33.1 | `protoc-33.1-linux-x86_64.zip` from GitHub releases, extracted to `/usr/local/bin` |
+| `flatc` | 25.9.23 | `Linux.flatc.binary.g++-13.zip` from `google/flatbuffers` releases |
+| `cargo-nextest` | latest | `cargo install cargo-nextest --locked` |
+| System packages | — | `build-essential`, `pkg-config`, `libssl-dev`, `musl-tools`, `cmake` |
+
+### Running the server locally
+
+```bash
+mkdir -p /tmp/rustfs-data
+RUSTFS_ROOT_USER=rustfsadmin RUSTFS_ROOT_PASSWORD=rustfsadmin \
+  RUSTFS_ADDRESS=0.0.0.0:9000 \
+  cargo run -p rustfs -- /tmp/rustfs-data
+```
+
+Default credentials: `rustfsadmin` / `rustfsadmin`. S3 API listens on port 9000.
+
+### Key dev commands
+
+See `Makefile` and `.config/make/*.mak` for the full list. The most common:
+
+- `make pre-commit` — fmt + clippy + compilation-check + test (run before every PR)
+- `make test` — uses `cargo nextest run` if available, falls back to `cargo test`
+- `make fmt` / `make clippy-check` — individual lint steps
+- `cargo build -p rustfs` — build main binary only
+
+### Gotchas
+
+- **No external services required.** RustFS uses local filesystem as storage backend; no databases, caches, or queues needed for basic dev/test.
+- **e2e tests are excluded** from `make test` / `cargo nextest run`. They require a running RustFS instance and are in the `e2e_test` crate. See `crates/e2e_test/AGENTS.md`.
+- **protoc and flatc are build-time requirements.** Without them, `cargo build` will fail on `rustfs-protos` / `rustfs-ecstore` crates.
+- **First build is slow** (~7 min in dev profile) due to native crypto crates (`aws-lc-rs`, `jemalloc`). Incremental rebuilds are fast.
+- **Doc tests** (`cargo test --all --doc`) are part of the full `make test` target and should not be skipped.
