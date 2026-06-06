@@ -16,9 +16,11 @@ use std::sync::OnceLock;
 
 use testcontainers_modules::{
     mysql::Mysql,
-    testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner},
+    testcontainers::{ImageExt, runners::AsyncRunner},
 };
 use tokio::sync::Mutex;
+
+use super::cleanup;
 
 const MYSQL_ROOT_PASSWORD: &str = "rustfs";
 const MYSQL_DATABASE: &str = "rustfs_events";
@@ -26,7 +28,6 @@ const MYSQL_DSN_ENV: &str = "RUSTFS_TEST_MYSQL_DSN";
 
 pub struct MysqlFixture {
     pub dsn: String,
-    _container: Option<ContainerAsync<Mysql>>,
 }
 
 static FIXTURE: OnceLock<MysqlFixture> = OnceLock::new();
@@ -43,7 +44,7 @@ pub async fn shared_mysql_fixture() -> &'static MysqlFixture {
     }
 
     let fixture = if let Ok(dsn) = std::env::var(MYSQL_DSN_ENV) {
-        MysqlFixture { dsn, _container: None }
+        MysqlFixture { dsn }
     } else {
         let container = Mysql::default()
             .with_env_var("MYSQL_ROOT_PASSWORD", MYSQL_ROOT_PASSWORD)
@@ -51,12 +52,11 @@ pub async fn shared_mysql_fixture() -> &'static MysqlFixture {
             .start()
             .await
             .expect("start MySQL test container");
+        cleanup::register_container(container.id().to_string());
         let port = container.get_host_port_ipv4(3306).await.expect("resolve MySQL host port");
         let dsn = format!("root:{MYSQL_ROOT_PASSWORD}@tcp(127.0.0.1:{port})/{MYSQL_DATABASE}");
-        MysqlFixture {
-            dsn,
-            _container: Some(container),
-        }
+        std::mem::forget(container);
+        MysqlFixture { dsn }
     };
 
     let _ = FIXTURE.set(fixture);

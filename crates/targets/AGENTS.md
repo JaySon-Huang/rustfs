@@ -93,7 +93,8 @@ Suites:
 - `tests/amqp_integration.rs` — AMQP notification target
 
 Shared container helpers live in `tests/support/`. Each test binary shares one
-container instance via `OnceLock`.
+container instance via `OnceLock`. Containers are removed on normal process exit
+via an `atexit` handler in `tests/support/cleanup.rs` (SIGKILL still leaves orphans).
 
 ## Suggested Validation
 

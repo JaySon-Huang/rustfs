@@ -14,17 +14,15 @@
 
 use std::sync::OnceLock;
 
-use testcontainers_modules::{
-    rabbitmq::RabbitMq,
-    testcontainers::{ContainerAsync, runners::AsyncRunner},
-};
+use testcontainers_modules::{rabbitmq::RabbitMq, testcontainers::runners::AsyncRunner};
 use tokio::sync::Mutex;
+
+use super::cleanup;
 
 const AMQP_URL_ENV: &str = "RUSTFS_TEST_AMQP_URL";
 
 pub struct AmqpFixture {
     pub url: String,
-    _container: Option<ContainerAsync<RabbitMq>>,
 }
 
 static FIXTURE: OnceLock<AmqpFixture> = OnceLock::new();
@@ -41,15 +39,14 @@ pub async fn shared_amqp_fixture() -> &'static AmqpFixture {
     }
 
     let fixture = if let Ok(url) = std::env::var(AMQP_URL_ENV) {
-        AmqpFixture { url, _container: None }
+        AmqpFixture { url }
     } else {
         let container = RabbitMq::default().start().await.expect("start RabbitMQ test container");
+        cleanup::register_container(container.id().to_string());
         let port = container.get_host_port_ipv4(5672).await.expect("resolve RabbitMQ host port");
         let url = format!("amqp://guest:guest@127.0.0.1:{port}/%2f");
-        AmqpFixture {
-            url,
-            _container: Some(container),
-        }
+        std::mem::forget(container);
+        AmqpFixture { url }
     };
 
     let _ = FIXTURE.set(fixture);
