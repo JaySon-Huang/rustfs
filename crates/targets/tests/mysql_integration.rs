@@ -14,40 +14,24 @@
 
 //! MySQL notification target integration tests.
 //!
-//! These tests require a running MySQL 8.0+ or TiDB 8.5+ instance.
-//! They are `#[ignore]` by default so CI never runs them. To run locally
-//! (podman recommended; docker works too):
+//! Requires Docker or Podman. These tests are gated behind the `integration-tests`
+//! feature and are not run by default CI. To run locally:
 //!
 //! ```bash
-//! podman run -d --name rustfs-mysql-test -p 3306:3306 \
-//!     -e MYSQL_ROOT_PASSWORD=testpass -e MYSQL_DATABASE=testdb \
-//!     docker.io/library/mysql:8.0.36
+//! cargo test -p rustfs-targets --test mysql_integration --features integration-tests
 //! ```
 //!
-//! Wait for MySQL to be ready (look for `ready for connections` in logs),
-//! then set `RUSTFS_TEST_MYSQL_DSN` and run:
-//!
-//! ```bash
-//! export RUSTFS_TEST_MYSQL_DSN="root:testpass@tcp(127.0.0.1:3306)/testdb"
-//! cargo test -p rustfs-targets --test mysql_integration -- --ignored
-//! ```
-//!
-//! Clean up:
-//!
-//! ```bash
-//! podman rm -f rustfs-mysql-test
-//! ```
+//! Override the DSN with `RUSTFS_TEST_MYSQL_DSN` to use an external MySQL 8.0+ or
+//! TiDB 8.5+ instance instead of starting a container.
+
+mod support;
 
 use mysql_async::{Opts, OptsBuilder, Pool, SslOpts, prelude::Queryable};
 use rustfs_targets::{Target, TargetError, target::mysql::*, target::*};
-use std::env;
 use std::sync::Arc;
+use support::shared_mysql_fixture;
 use tempfile::TempDir;
 use uuid::Uuid;
-
-fn test_dsn() -> String {
-    env::var("RUSTFS_TEST_MYSQL_DSN").expect("RUSTFS_TEST_MYSQL_DSN must be set")
-}
 
 fn table_name(prefix: &str) -> String {
     let suffix = Uuid::new_v4().simple().to_string();
@@ -107,10 +91,9 @@ async fn drop_table(dsn: &str, table: &str) {
         .await;
 }
 
-#[ignore]
 #[tokio::test]
 async fn direct_write_and_read() {
-    let dsn = test_dsn();
+    let dsn = shared_mysql_fixture().await.dsn.clone();
     let table = table_name("test_direct");
     let target: MySqlTarget<serde_json::Value> =
         MySqlTarget::new("direct".to_string(), make_args(&dsn, &table, "")).expect("create target");
@@ -131,10 +114,9 @@ async fn direct_write_and_read() {
     drop_table(&dsn, &table).await;
 }
 
-#[ignore]
 #[tokio::test]
 async fn delete_appends_row_does_not_remove_old() {
-    let dsn = test_dsn();
+    let dsn = shared_mysql_fixture().await.dsn.clone();
     let table = table_name("test_delete");
     let target: MySqlTarget<serde_json::Value> =
         MySqlTarget::new("delete".to_string(), make_args(&dsn, &table, "")).expect("create target");
@@ -155,10 +137,9 @@ async fn delete_appends_row_does_not_remove_old() {
     drop_table(&dsn, &table).await;
 }
 
-#[ignore]
 #[tokio::test]
 async fn queue_store_saves_entry_and_replays() {
-    let dsn = test_dsn();
+    let dsn = shared_mysql_fixture().await.dsn.clone();
     let table = table_name("test_queue");
     let tmpdir = TempDir::new().expect("temp dir");
     let queue_dir = tmpdir.path().to_str().expect("valid path");
@@ -195,10 +176,9 @@ async fn queue_store_saves_entry_and_replays() {
     drop_table(&dsn, &table).await;
 }
 
-#[ignore]
 #[tokio::test]
 async fn duplicate_replay_produces_duplicate_rows() {
-    let dsn = test_dsn();
+    let dsn = shared_mysql_fixture().await.dsn.clone();
     let table = table_name("test_dupe");
     let tmpdir = TempDir::new().expect("temp dir");
     let queue_dir = tmpdir.path().to_str().expect("valid path");
@@ -236,10 +216,9 @@ async fn duplicate_replay_produces_duplicate_rows() {
     drop_table(&dsn, &table).await;
 }
 
-#[ignore]
 #[tokio::test]
 async fn incompatible_schema_init_fails() {
-    let dsn = test_dsn();
+    let dsn = shared_mysql_fixture().await.dsn.clone();
     let table = table_name("test_schema");
 
     {
@@ -267,10 +246,9 @@ async fn incompatible_schema_init_fails() {
     drop_table(&dsn, &table).await;
 }
 
-#[ignore]
 #[tokio::test]
 async fn check_mysql_server_available_succeeds_against_existing_table() {
-    let dsn = test_dsn();
+    let dsn = shared_mysql_fixture().await.dsn.clone();
     let table = table_name("test_check");
 
     {

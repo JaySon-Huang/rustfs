@@ -61,12 +61,39 @@ orchestration primitives, and plugin control-plane state modeling.
 
 ## Integration Tests
 
-Integration tests under `tests/` are `#[ignore]` by default so CI never runs
-them. See module-level doc comments in each test file for prerequisites and
-run commands.
+Integration tests under `tests/` are gated behind the `integration-tests`
+feature so default CI and `make pre-commit` never run them. They use
+testcontainers to start MySQL, PostgreSQL, and RabbitMQ automatically.
+Docker or Podman (with `DOCKER_HOST` set) is required.
 
-- `tests/mysql_integration.rs` — MySQL 8.0+ / TiDB 8.5+
-- `tests/postgres_integration.rs` — PostgreSQL
+Run locally:
+
+```bash
+cargo test -p rustfs-targets --features integration-tests
+```
+
+Or run a single suite:
+
+```bash
+cargo test -p rustfs-targets --test mysql_integration --features integration-tests
+cargo test -p rustfs-targets --test postgres_integration --features integration-tests
+cargo test -p rustfs-targets --test amqp_integration --features integration-tests
+```
+
+Override endpoints to use an external instance instead of starting a container:
+
+- `RUSTFS_TEST_MYSQL_DSN` — MySQL 8.0+ or TiDB 8.5+ DSN
+- `RUSTFS_TEST_PG_DSN` — PostgreSQL connection URL
+- `RUSTFS_TEST_AMQP_URL` — RabbitMQ-compatible AMQP URL
+
+Suites:
+
+- `tests/mysql_integration.rs` — MySQL notification target
+- `tests/postgres_integration.rs` — PostgreSQL notification target
+- `tests/amqp_integration.rs` — AMQP notification target
+
+Shared container helpers live in `tests/support/`. Each test binary shares one
+container instance via `OnceLock`.
 
 ## Suggested Validation
 

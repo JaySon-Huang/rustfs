@@ -14,29 +14,17 @@
 
 //! PostgreSQL notification target integration tests.
 //!
-//! These tests require a running PostgreSQL server. They are `#[ignore]` by
-//! default so CI never runs them. To run locally
-//! (podman recommended; docker works too):
+//! Requires Docker or Podman. These tests are gated behind the `integration-tests`
+//! feature and are not run by default CI. To run locally:
 //!
 //! ```bash
-//! podman run -d --name rustfs-pg-test -p 5432:5432 \
-//!     -e POSTGRES_PASSWORD=rustfs -e POSTGRES_DB=rustfs_events \
-//!     docker.io/library/postgres:16
+//! cargo test -p rustfs-targets --test postgres_integration --features integration-tests
 //! ```
 //!
-//! Wait for PostgreSQL to be ready (look for `database system is ready` in logs),
-//! then set `RUSTFS_TEST_PG_DSN` and run:
-//!
-//! ```bash
-//! export RUSTFS_TEST_PG_DSN="postgres://postgres:rustfs@localhost:5432/rustfs_events"
-//! cargo test -p rustfs-targets --test postgres_integration -- --ignored
-//! ```
-//!
-//! Clean up:
-//!
-//! ```bash
-//! podman rm -f rustfs-pg-test
-//! ```
+//! Override the DSN with `RUSTFS_TEST_PG_DSN` to use an external PostgreSQL server
+//! instead of starting a container.
+
+mod support;
 
 use rustfs_s3_types::EventName;
 use rustfs_targets::Target;
@@ -46,22 +34,18 @@ use rustfs_targets::target::TargetType;
 use rustfs_targets::target::postgres::{PostgresArgs, PostgresDsn, PostgresFormat, PostgresTarget};
 use serde_json::Value;
 use std::sync::Arc;
+use support::shared_postgres_fixture;
 use tokio_postgres::NoTls;
 use url::Url;
 use uuid::Uuid;
 
-fn env_or(key: &str, default: &str) -> String {
-    std::env::var(key).unwrap_or_else(|_| default.to_string())
-}
+const PLACEHOLDER_PG_DSN: &str = "postgres://postgres:rustfs@127.0.0.1:5432/rustfs_events";
 
-fn test_args(table: &str, format: PostgresFormat) -> PostgresArgs {
-    let dsn = env_or("RUSTFS_TEST_PG_DSN", "postgres://postgres:rustfs@localhost:5432/rustfs_events");
-    let schema = PostgresDsn::parse(&dsn)
-        .expect("RUSTFS_TEST_PG_DSN must be a valid PostgreSQL DSN")
-        .schema;
+fn test_args(dsn: &str, table: &str, format: PostgresFormat) -> PostgresArgs {
+    let schema = PostgresDsn::parse(dsn).expect("DSN must be a valid PostgreSQL DSN").schema;
     PostgresArgs {
         enable: true,
-        dsn_string: dsn,
+        dsn_string: dsn.to_string(),
         schema,
         table: table.to_string(),
         format,
@@ -76,7 +60,7 @@ fn test_args(table: &str, format: PostgresFormat) -> PostgresArgs {
 }
 
 fn with_search_path(dsn: &str, schema: &str) -> String {
-    let mut url = Url::parse(dsn).expect("RUSTFS_TEST_PG_DSN must be a valid PostgreSQL DSN URL");
+    let mut url = Url::parse(dsn).expect("DSN must be a valid PostgreSQL DSN URL");
     url.query_pairs_mut().clear().append_pair("search_path", schema);
     url.to_string()
 }
@@ -106,11 +90,10 @@ fn entity_for(bucket: &str, object: &str) -> Arc<EntityTarget<serde_json::Value>
 }
 
 #[tokio::test]
-#[ignore = "requires running PostgreSQL server"]
 async fn test_check_postgres_server_available_with_existing_table() {
-    let args = test_args("pg_class", PostgresFormat::Namespace);
+    let dsn = shared_postgres_fixture().await.dsn.clone();
+    let mut args = test_args(&dsn, "pg_class", PostgresFormat::Namespace);
     // Use a real existing table: pg_class always exists.
-    let mut args = args;
     args.dsn_string = with_search_path(&args.dsn_string, "pg_catalog");
     args.schema = "pg_catalog".to_string();
     args.table = "pg_class".to_string();
@@ -121,18 +104,18 @@ async fn test_check_postgres_server_available_with_existing_table() {
 }
 
 #[tokio::test]
-#[ignore = "requires running PostgreSQL server"]
 async fn test_check_postgres_server_available_missing_table_fails() {
-    let args = test_args("does_not_exist_table_xyz", PostgresFormat::Namespace);
+    let dsn = shared_postgres_fixture().await.dsn.clone();
+    let args = test_args(&dsn, "does_not_exist_table_xyz", PostgresFormat::Namespace);
     let result = check_postgres_server_available(&args).await;
     assert!(result.is_err(), "missing table should fail the probe");
 }
 
 #[tokio::test]
-#[ignore = "requires running PostgreSQL server"]
 async fn test_namespace_format_upsert_replaces_value() {
+    let dsn = shared_postgres_fixture().await.dsn.clone();
     let table = unique_table("rustfs_test_namespace");
-    let args = test_args(&table, PostgresFormat::Namespace);
+    let args = test_args(&dsn, &table, PostgresFormat::Namespace);
 
     // Setup: create the namespace table.
     let setup = raw_client(&args).await;
@@ -173,10 +156,10 @@ async fn test_namespace_format_upsert_replaces_value() {
 }
 
 #[tokio::test]
-#[ignore = "requires running PostgreSQL server"]
 async fn test_access_format_appends_distinct_events() {
+    let dsn = shared_postgres_fixture().await.dsn.clone();
     let table = unique_table("rustfs_test_access");
-    let args = test_args(&table, PostgresFormat::Access);
+    let args = test_args(&dsn, &table, PostgresFormat::Access);
 
     let setup = raw_client(&args).await;
     setup
@@ -218,10 +201,10 @@ async fn test_access_format_appends_distinct_events() {
 }
 
 #[tokio::test]
-#[ignore = "requires running PostgreSQL server"]
 async fn test_access_format_replay_is_idempotent() {
+    let dsn = shared_postgres_fixture().await.dsn.clone();
     let table = unique_table("rustfs_test_access_replay");
-    let args = test_args(&table, PostgresFormat::Access);
+    let args = test_args(&dsn, &table, PostgresFormat::Access);
 
     let setup = raw_client(&args).await;
     setup
@@ -277,10 +260,10 @@ async fn test_access_format_replay_is_idempotent() {
 }
 
 #[tokio::test]
-#[ignore = "requires running PostgreSQL server"]
 async fn test_init_succeeds_against_existing_table() {
+    let dsn = shared_postgres_fixture().await.dsn.clone();
     let table = unique_table("rustfs_test_init");
-    let args = test_args(&table, PostgresFormat::Namespace);
+    let args = test_args(&dsn, &table, PostgresFormat::Namespace);
 
     let setup = raw_client(&args).await;
     setup
@@ -304,8 +287,7 @@ async fn test_init_succeeds_against_existing_table() {
 
 #[tokio::test]
 async fn test_invalid_identifier_rejected_at_construction() {
-    // No #[ignore] — pure validation, no DB needed.
-    let args = test_args("malicious; DROP TABLE users", PostgresFormat::Namespace);
+    let args = test_args(PLACEHOLDER_PG_DSN, "malicious; DROP TABLE users", PostgresFormat::Namespace);
     match PostgresTarget::<serde_json::Value>::new("bad_id".to_string(), args) {
         Ok(_) => panic!("malicious table identifier must fail at construction"),
         Err(e) => assert!(e.to_string().contains("table"), "unexpected error: {e}"),

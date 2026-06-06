@@ -14,15 +14,17 @@
 
 //! Integration tests for the AMQP notification target.
 //!
-//! These tests are ignored because they require a running RabbitMQ-compatible
-//! AMQP 0-9-1 broker. To run locally:
+//! Requires Docker or Podman. These tests are gated behind the `integration-tests`
+//! feature and are not run by default CI. To run locally:
 //!
 //! ```bash
-//! docker run -d --name rustfs-rabbitmq -p 5672:5672 rabbitmq:3
-//! cargo test -p rustfs-targets --test amqp_integration -- --ignored
+//! cargo test -p rustfs-targets --test amqp_integration --features integration-tests
 //! ```
 //!
-//! Override the broker URL with `RUSTFS_TEST_AMQP_URL`.
+//! Override the broker URL with `RUSTFS_TEST_AMQP_URL` to use an external
+//! RabbitMQ-compatible broker instead of starting a container.
+
+mod support;
 
 use lapin::{
     BasicProperties, Connection, ConnectionProperties,
@@ -37,16 +39,13 @@ use rustfs_targets::target::TargetType;
 use rustfs_targets::target::amqp::{AMQPArgs, AMQPTarget};
 use serde_json::Value;
 use std::sync::Arc;
+use support::shared_amqp_fixture;
 use uuid::Uuid;
 
-fn broker_url() -> String {
-    std::env::var("RUSTFS_TEST_AMQP_URL").unwrap_or_else(|_| "amqp://guest:guest@127.0.0.1:5672/%2f".to_string())
-}
-
-fn test_args(routing_key: &str) -> AMQPArgs {
+fn test_args(url: &str, routing_key: &str) -> AMQPArgs {
     AMQPArgs {
         enable: true,
-        url: broker_url().parse().expect("valid AMQP URL"),
+        url: url.parse().expect("valid AMQP URL"),
         exchange: "amq.topic".to_string(),
         routing_key: routing_key.to_string(),
         mandatory: true,
@@ -71,8 +70,8 @@ fn entity_for(bucket: &str, object: &str) -> Arc<EntityTarget<serde_json::Value>
     })
 }
 
-async fn bind_queue(queue: &str, routing_key: &str) -> lapin::Channel {
-    let conn = Connection::connect(&broker_url(), ConnectionProperties::default())
+async fn bind_queue(url: &str, queue: &str, routing_key: &str) -> lapin::Channel {
+    let conn = Connection::connect(url, ConnectionProperties::default())
         .await
         .expect("connect to AMQP broker");
     let channel = conn.create_channel().await.expect("create channel");
@@ -125,20 +124,20 @@ async fn read_one(channel: &lapin::Channel, queue: &str) -> (Value, BasicPropert
 }
 
 #[tokio::test]
-#[ignore = "requires running RabbitMQ-compatible AMQP broker"]
 async fn test_check_amqp_broker_available() {
-    check_amqp_broker_available(&test_args("rustfs.check"))
+    let url = shared_amqp_fixture().await.url.clone();
+    check_amqp_broker_available(&test_args(&url, "rustfs.check"))
         .await
         .expect("broker check should succeed");
 }
 
 #[tokio::test]
-#[ignore = "requires running RabbitMQ-compatible AMQP broker"]
 async fn test_direct_publish_delivers_json_payload() {
+    let url = shared_amqp_fixture().await.url.clone();
     let routing_key = format!("rustfs.test.{}", Uuid::new_v4().simple());
     let queue = format!("rustfs-test-{}", Uuid::new_v4().simple());
-    let channel = bind_queue(&queue, &routing_key).await;
-    let target = AMQPTarget::new("direct".to_string(), test_args(&routing_key)).expect("construct AMQP target");
+    let channel = bind_queue(&url, &queue, &routing_key).await;
+    let target = AMQPTarget::new("direct".to_string(), test_args(&url, &routing_key)).expect("construct AMQP target");
 
     target
         .save(entity_for("bucket1", "object-A"))
@@ -158,12 +157,12 @@ async fn test_direct_publish_delivers_json_payload() {
 }
 
 #[tokio::test]
-#[ignore = "requires running RabbitMQ-compatible AMQP broker"]
 async fn test_publish_reconnects_after_close() {
+    let url = shared_amqp_fixture().await.url.clone();
     let routing_key = format!("rustfs.reconnect.{}", Uuid::new_v4().simple());
     let queue = format!("rustfs-test-{}", Uuid::new_v4().simple());
-    let channel = bind_queue(&queue, &routing_key).await;
-    let target = AMQPTarget::new("reconnect".to_string(), test_args(&routing_key)).expect("construct AMQP target");
+    let channel = bind_queue(&url, &queue, &routing_key).await;
+    let target = AMQPTarget::new("reconnect".to_string(), test_args(&url, &routing_key)).expect("construct AMQP target");
 
     target
         .save(entity_for("bucket1", "object-before-close"))
@@ -188,13 +187,13 @@ async fn test_publish_reconnects_after_close() {
 }
 
 #[tokio::test]
-#[ignore = "requires running RabbitMQ-compatible AMQP broker"]
 async fn test_queue_replay_delivers_and_removes_stored_payload() {
+    let url = shared_amqp_fixture().await.url.clone();
     let routing_key = format!("rustfs.replay.{}", Uuid::new_v4().simple());
     let queue = format!("rustfs-test-{}", Uuid::new_v4().simple());
-    let channel = bind_queue(&queue, &routing_key).await;
+    let channel = bind_queue(&url, &queue, &routing_key).await;
     let queue_dir = std::env::temp_dir().join(format!("rustfs-amqp-integration-{}", Uuid::new_v4()));
-    let mut args = test_args(&routing_key);
+    let mut args = test_args(&url, &routing_key);
     args.queue_dir = queue_dir.to_string_lossy().to_string();
     let target = AMQPTarget::new("queued".to_string(), args.clone()).expect("construct AMQP target");
 

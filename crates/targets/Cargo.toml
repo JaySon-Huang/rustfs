@@ -11,6 +11,9 @@ keywords = ["file-system", "notification", "target", "rustfs", "Minio"]
 categories = ["web-programming", "development-tools", "filesystem"]
 documentation = "https://docs.rs/rustfs-targets/latest/rustfs_targets/"
 
+[features]
+integration-tests = []
+
 [dependencies]
 rustfs-config = { workspace = true, features = ["notify", "constants", "audit"] }
 rustfs-ecstore = { workspace = true }
@@ -54,6 +57,19 @@ metrics = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 tempfile = { workspace = true }
+testcontainers-modules = { version = "0.15", features = ["mysql", "postgres", "rabbitmq"] }
+
+[[test]]
+name = "mysql_integration"
+required-features = ["integration-tests"]
+
+[[test]]
+name = "postgres_integration"
+required-features = ["integration-tests"]
+
+[[test]]
+name = "amqp_integration"
+required-features = ["integration-tests"]
 
 [[bench]]
 name = "queue_store_benchmark"
